@@ -26,17 +26,6 @@ import sklearn
 cvxopt.solvers.options['show_progress'] = False
 
 
-np.random.seed(42)
-random.seed(42)
-
-X_test_ = pd.read_csv('data/Xte.csv',sep=',',index_col=0)
-X_train_ = pd.read_csv('data/Xtr.csv',sep=',',index_col=0)
-
-X_test_mat100 = pd.read_csv('data/Xte_mat100.csv',sep=' ',header=None).values
-X_train_mat100 = pd.read_csv('data/Xtr_mat100.csv',sep=' ',header=None).values
-
-y = pd.read_csv('data/Ytr.csv',sep=',',index_col=0)
-
 def get_label(type=0):
     y = pd.read_csv('data/Ytr.csv',sep=',',index_col=0)
     if type == 0:
@@ -79,7 +68,6 @@ def spectral_embedding(sequence,kmer_size=3):
 def get_data(kmer_size):
     data = pd.DataFrame(pd.concat([X_train_.seq,X_test_.seq],axis=0))
     train_text = data.seq.values
-    # X_train_['kmers'] = X_train_.seq.apply(lambda x:list(spectral_embedding(x,kmer_size=3)))
     kmer_data = []
     for i in train_text:
         kmer_data.append(spectral_embedding(i,kmer_size=kmer_size))
@@ -109,14 +97,6 @@ def rbf_kernel(X1, X2, sigma=10):
     return K
 
 class KernelMethodBase(object):
-    '''
-    Base class for kernel methods models
-    
-    Methods
-    ----
-    fit
-    predict
-    '''
     kernels_ = {
         'linear': linear_kernel,
         'polynomial': polynomial_kernel,
@@ -134,8 +114,6 @@ class KernelMethodBase(object):
             params['sigma'] = kwargs.get('sigma', None)
         if self.kernel_name == 'polynomial':
             params['power'] = kwargs.get('power', None)
-            
-        
         return params
 
     def fit(self, X, y, **kwargs):
@@ -149,13 +127,8 @@ class KernelMethodBase(object):
 
 
 class KernelRidgeRegression(KernelMethodBase):
-    '''
-    Kernel Ridge Regression
-    '''
     def __init__(self, lambd=0.1, **kwargs):
         self.lambd = lambd
-        # Python 3: replace the following line by
-        # super().__init__(**kwargs)
         super(KernelRidgeRegression, self).__init__(**kwargs)
 
     def fit(self, X, y, sample_weights=None):
@@ -172,7 +145,6 @@ class KernelRidgeRegression(KernelMethodBase):
         
         A = self.kernel_function_(X,X,**self.kernel_parameters)
         A[np.diag_indices_from(A)] = np.add(A[np.diag_indices_from(A)],n*self.lambd)
-        # self.alpha = (K + n lambda I)^-1 y
         self.alpha = np.linalg.solve(A , self.y_train)
 
         return self
@@ -216,54 +188,71 @@ def cross_validate(x_data,y_data,kernel=None,lambd=0.2,C=3,sigma=0.5,k=5,power=2
         result =sum(np.sign(model.predict(x_test))==y_test)/len(y_test)#roc_auc_score(np.sign(model.predict(x_test)),y_test) #
             
         aggrigate_result.append(result)
-        
         value = sum(aggrigate_result)/len(aggrigate_result)
     return value
 
 
 
-X_train, X_test, y_train, y_test = get_train_test(get_data(7)[:2000,:],get_label(type=-1),0.3)
 
-# 0.6585	00:00:03.992723	27.187947	4	7	1.418356	2
 
-# model = KernelRidgeRegression(
-#                 kernel='linear',
-#                 lambd=0.688381,
-#                 sigma=93.801110
-#             ).fit(X_train, y_train)
 
-model = KernelRidgeRegression(
-                kernel='polynomial',
-                lambd=1.418356,
-                sigma=2,
-                power=2,
-                C= 27.187947
-            ).fit(X_train, y_train)
-result = sum(np.sign(model.predict(X_test).flatten())==y_test.flatten())/len(y_test.flatten())
-cv_result = cross_validate(get_data(7)[:2000,:],get_label(type=-1),
-                kernel='polynomial',
-                lambd=1.418356,
-                sigma=2,
-                C= 27.187947,
-                power=2,
-                k = 4)
-print(result,cv_result)
+def main():
+        np.random.seed(42)
+        random.seed(42)
 
-X_test_final  = np.sign(model.predict(get_data(7)[2000:,:]))
-sumbission = []
-for i in range(len(X_test_final)):
-    r1 = X_test_final[i]
-    if r1 == 1:
-        sumbission.append([i,int(r1)])
-    elif r1 == -1:
-        sumbission.append([i,0])
-    else:
-        print('problem')
+        X_train, X_test, y_train, y_test = get_train_test(get_data(7)[:2000,:],get_label(type=-1),0.3)
+        model = KernelRidgeRegression(
+                        kernel='linear',
+                        lambd=0.688381
+                    ).fit(X_train, y_train)
+
         
-    
-# sumbission
-df = pd.DataFrame(sumbission)
-df.columns = ['Id','Bound']
-df.to_csv('cv_new.csv',index=False)
+        # model = KernelRidgeRegression(
+        #                 kernel='polynomial',
+        #                 lambd=1.418356,
+        #                 sigma=2,
+        #                 power=2,
+        #                 C= 27.187947
+        #             ).fit(X_train, y_train)
 
-df.head(15)
+        
+        result = sum(np.sign(model.predict(X_test).flatten())==y_test.flatten())/len(y_test.flatten())
+        cv_result = cross_validate(get_data(7)[:2000,:],get_label(type=-1),
+                         kernel='linear',
+                        lambd=0.688381,
+                        sigma=93.801110,
+                        k = 4)
+
+
+        print('Accuracy on 70-30 Split {}'.format(result))
+        print('Accuracy on Cross Validation {}'.format(cv_result))
+
+        X_test_final  = np.sign(model.predict(get_data(7)[2000:,:]))
+        sumbission = []
+        for i in range(len(X_test_final)):
+            r1 = X_test_final[i]
+            if r1 == 1:
+                sumbission.append([i,int(r1)])
+            elif r1 == -1:
+                sumbission.append([i,0])
+            else:
+                print('problem')
+                
+            
+        # sumbission
+        df = pd.DataFrame(sumbission)
+        df.columns = ['Id','Bound']
+        df.to_csv('cv'+str(cv_result[0])+'.csv',index=False)
+
+
+if __name__ == "__main__":
+
+    X_test_ = pd.read_csv('data/Xte.csv',sep=',',index_col=0)
+    X_train_ = pd.read_csv('data/Xtr.csv',sep=',',index_col=0)
+
+    X_test_mat100 = pd.read_csv('data/Xte_mat100.csv',sep=' ',header=None).values
+    X_train_mat100 = pd.read_csv('data/Xtr_mat100.csv',sep=' ',header=None).values
+
+    y = pd.read_csv('data/Ytr.csv',sep=',',index_col=0)
+    
+    main()
