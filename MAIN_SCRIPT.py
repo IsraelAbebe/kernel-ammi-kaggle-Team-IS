@@ -39,7 +39,7 @@ def get_label(type=0):
 def get_train_test(X,y,p):
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=p, random_state=42)
-    print(X_train.shape,X_test.shape,y_train.shape, y_test.shape)
+    print('Data Shapes: ,',X_train.shape,X_test.shape,y_train.shape, y_test.shape)
     return X_train, X_test, y_train, y_test
 
 def getKmers(sequence, size=3):
@@ -156,7 +156,73 @@ class KernelRidgeRegression(KernelMethodBase):
     def predict(self, X):
         return self.decision_function(X)
 
-def cross_validate(x_data,y_data,kernel=None,lambd=0.2,C=3,sigma=0.5,k=5,power=2):
+
+class KernelSVM(KernelMethodBase):
+    def __init__(self, C=0.1, **kwargs):
+        self.C = C
+        # Python 3: replace the following line by
+        # super().__init__(**kwargs)
+        super(KernelSVM, self).__init__(**kwargs)
+        
+    def cvxopt_qp(self,P, q, G, h, A, b):
+        P = .5 * (P + P.T)
+        cvx_matrices = [
+            cvxopt.matrix(M) if M is not None else None for M in [P, q, G, h, A, b] 
+        ]
+        #cvxopt.solvers.options['show_progress'] = False
+        solution = cvxopt.solvers.qp(*cvx_matrices, options={'show_progress': False})
+        return np.array(solution['x']).flatten()
+    
+    def svm_dual_soft_to_qp_kernel(self,K, y, C=1):
+        n = K.shape[0]
+        assert (len(y) == n)
+
+        # Dual formulation, soft margin
+        # P = np.diag(y) @ K @ np.diag(y)
+        P = np.diag(y).dot(K).dot(np.diag(y))
+        # As a regularization, we add epsilon * identity to P
+        eps = 1e-12
+        P += eps * np.eye(n)
+        q = - np.ones(n)
+        G = np.vstack([-np.eye(n), np.eye(n)])
+        h = np.hstack([np.zeros(n), C * np.ones(n)])
+        A = y[np.newaxis, :]
+        b = np.array([0.])
+        return P, q, G, h, A.astype(float), b
+
+
+    def fit(self, X, y, tol=1e-8):
+        n, p = X.shape
+        assert (n == len(y))
+    
+        self.X_train = X
+        self.y_train = y
+        
+        # Kernel matrix
+        K = self.kernel_function_(
+            self.X_train, self.X_train, **self.kernel_parameters)
+        
+        # Solve dual problem
+        self.alpha = self.cvxopt_qp(*self.svm_dual_soft_to_qp_kernel(K, y, C=self.C))
+        
+        # Compute support vectors and bias b
+        sv = np.logical_and((self.alpha > tol), (self.C - self.alpha > tol))
+        self.bias = y[sv] - K[sv].dot(self.alpha * y)
+        self.bias = self.bias.mean()
+
+        self.support_vector_indices = np.nonzero(sv)[0]
+
+        return self
+        
+    def decision_function(self, X):
+        K_x = self.kernel_function_(X, self.X_train, **self.kernel_parameters)
+        return K_x.dot(self.alpha * self.y_train) + self.bias
+
+    def predict(self, X):
+        return np.sign(self.decision_function(X))
+
+
+def cross_validate(x_data,y_data,model_name,lr=None,kernel=None,lambd=0.2,C=3,sigma=0.5,k=5,power=2):
     if len(x_data)%k != 0:
         print('cant vsplit',len(x_data),' by ',k)
         return
@@ -179,19 +245,35 @@ def cross_validate(x_data,y_data,kernel=None,lambd=0.2,C=3,sigma=0.5,k=5,power=2
                 x_train = np.concatenate((x_train,x_data_splitted[item]), axis=0)
                 y_train = np.concatenate((y_train,y_data_splitted[item]), axis=0)
         
-        model = KernelRidgeRegression(
+        if model_name == 'KernelRidgeRegression':
+            model = KernelRidgeRegression(
                     kernel=kernel,
                     lambd=lambd,
                     sigma=sigma,
                     power=power
                 ).fit(x_train, y_train)
-        result =sum(np.sign(model.predict(x_test))==y_test)/len(y_test)#roc_auc_score(np.sign(model.predict(x_test)),y_test) #
+            result =sum(np.sign(model.predict(x_test))==y_test)/len(y_test)#roc_auc_score(np.sign(model.predict(x_test)),y_test) #
+            
+        elif model_name == 'KernelSVM':
+
+            model = KernelSVM(C=C,
+                              kernel=kernel,
+                              lambd=lambd,
+                              sigma=sigma,
+                              power=power)
+            model.fit(x_train, y_train.flatten())
+            y_pred = model.predict(x_test)
+            
+            result = sum((y_pred.flatten()==y_test.flatten()))/len(y_test)
+            
+        else:
+            print('wrong model_name')
+            return 0
             
         aggrigate_result.append(result)
+        
         value = sum(aggrigate_result)/len(aggrigate_result)
     return value
-
-
 
 
 
@@ -200,13 +282,16 @@ def main():
         np.random.seed(42)
         random.seed(42)
 
-        X_train, X_test, y_train, y_test = get_train_test(get_data(7)[:2000,:],get_label(type=-1),0.3)
-        model = KernelRidgeRegression(
-                        kernel='linear',
-                        lambd=0.688381
-                    ).fit(X_train, y_train)
+        #TRAINING ON ALMOST ALL DATA
+        X_train, X_test, y_train, y_test = get_train_test(get_data(8)[:2000,:],get_label(type=-1),0.33)
+        # model = KernelRidgeRegression(
+        #                 kernel='linear',
+        #                 lambd=0.688381
+        #             ).fit(X_train, y_train)
+
 
         
+        # We dont need to worry about parameters that doesnt matter for this kernel because cross validater method handles it    
         # model = KernelRidgeRegression(
         #                 kernel='polynomial',
         #                 lambd=1.418356,
@@ -215,19 +300,25 @@ def main():
         #                 C= 27.187947
         #             ).fit(X_train, y_train)
 
-        
+        model = KernelSVM(C= 4.202029033820121,
+                        kernel='rbf',
+                        sigma=15.988389521578528)
+        model.fit(X_train, y_train.flatten())
+
+        # USING SIGN TO ACCOMPANY FOR BOTH
         result = sum(np.sign(model.predict(X_test).flatten())==y_test.flatten())/len(y_test.flatten())
-        cv_result = cross_validate(get_data(7)[:2000,:],get_label(type=-1),
-                         kernel='linear',
-                        lambd=0.688381,
-                        sigma=93.801110,
-                        k = 4)
+        cv_result = cross_validate(get_data(8)[:2000,:],get_label(type=-1),
+                        model_name='KernelSVM',
+                        C= 4.202029033820121,
+                        kernel='rbf',
+                        sigma=15.988389521578528,
+                        k=4)
 
 
-        print('Accuracy on 70-30 Split {}'.format(result))
+        # print('Accuracy on 70-30 Split {}'.format(result))
         print('Accuracy on Cross Validation {}'.format(cv_result))
 
-        X_test_final  = np.sign(model.predict(get_data(7)[2000:,:]))
+        X_test_final  = np.sign(model.predict(get_data(8)[2000:,:]))
         sumbission = []
         for i in range(len(X_test_final)):
             r1 = X_test_final[i]
@@ -242,7 +333,7 @@ def main():
         # sumbission
         df = pd.DataFrame(sumbission)
         df.columns = ['Id','Bound']
-        df.to_csv('cv'+str(cv_result[0])+'.csv',index=False)
+        df.to_csv('cv_'+str(cv_result)+'_.csv',index=False)
 
 
 if __name__ == "__main__":
